@@ -1,0 +1,34 @@
+name: Deploy Backend to Production
+
+on:
+  push:
+    branches:
+      - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Navigate to backend directory
+            cd ~/neobuy-backend
+
+            # Pull latest changes from prod branch
+            git checkout prod
+            git pull origin prod
+
+            # Install any fresh packages
+            npm install --production
+
+            # Start or restart the service gracefully using PM2
+            pm2 restart src/app.js --name "neobuy-backend" || pm2 start src/app.js --name "neobuy-backend"
