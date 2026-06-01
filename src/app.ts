@@ -1,44 +1,19 @@
 import 'dotenv/config';
 
-import { ApolloServer } from '@apollo/server';
-import { expressMiddleware } from '@as-integrations/express5';
-import cors from 'cors';
-import express from 'express';
-import { resolvers } from './graphql/resolvers';
-import { typeDefs } from './graphql/schema';
-import { errorHandler, notFoundHandler } from './middlewares/error.middleware';
-import apiRoutes from './routes';
+import type { Express } from 'express';
+import { createApp } from './create-app';
 
-const app = express();
 const port = Number(process.env.PORT || 4000);
 
-app.use(cors());
-app.use(express.json());
-
-app.use('/api', apiRoutes);
-
-async function startServer(): Promise<void> {
-  const apolloServer = new ApolloServer({
-    typeDefs,
-    resolvers,
-  });
-
-  await apolloServer.start();
-
-  app.use(
-    '/graphql',
-    expressMiddleware(apolloServer, {
-      context: async () => ({}),
-    }),
-  );
-
-  app.use(notFoundHandler);
-  app.use(errorHandler);
+async function startServer(): Promise<Express> {
+  const app = await createApp({ enableGraphql: true });
 
   app.listen(port, () => {
     console.log(`NeoBuy API listening on port ${port}`);
     console.log(`GraphQL endpoint: http://localhost:${port}/graphql`);
   });
+
+  return app;
 }
 
 if (require.main === module) {
@@ -48,5 +23,4 @@ if (require.main === module) {
   });
 }
 
-export default app;
-export { startServer };
+export { createApp, startServer };

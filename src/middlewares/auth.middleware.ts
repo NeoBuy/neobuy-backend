@@ -1,6 +1,11 @@
-import type { RequestHandler } from 'express';
-import type { RoleCode } from '../types/auth';
+import type { Request, RequestHandler } from 'express';
+import type { AccessTokenPayload, RoleCode } from '../types/auth';
 import { verifyAuthToken } from '../utils/jwt';
+
+/** Express request after `authenticate` — `user` is guaranteed. */
+export interface AuthenticatedRequest extends Request {
+  user: AccessTokenPayload;
+}
 
 const authenticate: RequestHandler = (req, res, next) => {
   const header = req.headers.authorization;
@@ -17,6 +22,9 @@ const authenticate: RequestHandler = (req, res, next) => {
   }
 };
 
+/** Alias for hybrid-API docs that reference `authenticateUser`. */
+const authenticateUser = authenticate;
+
 function requireRoles(...roles: RoleCode[]): RequestHandler {
   return (req, res, next) => {
     const userRoles = req.user?.roles ?? [];
@@ -29,4 +37,4 @@ function requireRoles(...roles: RoleCode[]): RequestHandler {
   };
 }
 
-export { authenticate, requireRoles };
+export { authenticate, authenticateUser, requireRoles };
