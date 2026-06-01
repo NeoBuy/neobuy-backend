@@ -36,5 +36,5 @@ jobs:
             # Apply pending database migrations
             npm run migrate:prod
 
-            # Start or restart the service gracefully using PM2
-            pm2 restart dist/app.js --name "neobuy-backend" || pm2 start dist/app.js --name "neobuy-backend"
+            # Start or restart the service gracefully using PM2 (disabled for now)
+            # pm2 restart dist/app.js --name "neobuy-backend" || pm2 start dist/app.js --name "neobuy-backend"
