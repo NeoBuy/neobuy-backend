@@ -27,8 +27,14 @@ jobs:
             git checkout prod
             git pull origin prod
 
-            # Install any fresh packages
-            npm install --production
+            # Install packages (includes db-migrate for schema updates)
+            npm install
+
+            # Compile TypeScript
+            npm run build
+
+            # Apply pending database migrations
+            npm run migrate:prod
 
             # Start or restart the service gracefully using PM2
-            pm2 restart src/app.js --name "neobuy-backend" || pm2 start src/app.js --name "neobuy-backend"
+            pm2 restart dist/app.js --name "neobuy-backend" || pm2 start dist/app.js --name "neobuy-backend"
