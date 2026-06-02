@@ -54,7 +54,26 @@ export const typeDefs = `#graphql
     data: [CatalogProductItem!]!
   }
 
+  type UserDashboardProfile {
+    id: ID!
+    fullName: String!
+    email: String!
+    orders: [OrderSnapshot!]!
+    wishlistCount: Int!
+  }
+
+  type OrderSnapshot {
+    id: ID!
+    orderNumber: String!
+    totalLkr: Float!
+    status: String!
+    paymentStatus: String!
+    fulfillmentStatus: String!
+    createdAt: String!
+  }
+
   type Query {
     discoverProducts(filter: ProductDiscoveryInput): PaginatedDiscoveryResponse!
+    me: UserDashboardProfile!
   }
 `;

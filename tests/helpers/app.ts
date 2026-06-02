@@ -1,11 +1,21 @@
 import type { Express } from 'express';
 import { createApp } from '../../src/create-app';
 
-let cachedApp: Express | undefined;
+let cachedRestOnlyApp: Express | undefined;
+let cachedGraphqlApp: Express | undefined;
 
-export async function getTestApp(): Promise<Express> {
-  if (!cachedApp) {
-    cachedApp = await createApp({ enableGraphql: false });
+export async function getTestApp(options?: { enableGraphql?: boolean }): Promise<Express> {
+  const enableGraphql = options?.enableGraphql ?? false;
+
+  if (enableGraphql) {
+    if (!cachedGraphqlApp) {
+      cachedGraphqlApp = await createApp({ enableGraphql: true });
+    }
+    return cachedGraphqlApp;
   }
-  return cachedApp;
+
+  if (!cachedRestOnlyApp) {
+    cachedRestOnlyApp = await createApp({ enableGraphql: false });
+  }
+  return cachedRestOnlyApp;
 }

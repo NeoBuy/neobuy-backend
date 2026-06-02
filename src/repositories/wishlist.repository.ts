@@ -1,6 +1,11 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type { PoolConnection } from 'mysql2/promise';
-import { getPool } from '../config/db';
+import {
+  acquireConnection,
+  execute,
+  isTestTransactionActive,
+  releaseConnection,
+} from '../config/db';
 import type { WishlistItemResponse, WishlistToggleResult } from '../types/wishlist';
 
 interface WishlistIdRow extends RowDataPacket {
@@ -39,46 +44,59 @@ async function getOrCreateWishlistId(userId: number, connection: PoolConnection)
   return result.insertId;
 }
 
-async function toggleItem(userId: number, variantId: number): Promise<WishlistToggleResult> {
-  const pool = getPool();
-  const connection = await pool.getConnection();
+async function toggleItemOnConnection(
+  userId: number,
+  variantId: number,
+  connection: PoolConnection,
+): Promise<WishlistToggleResult> {
+  const wishlistId = await getOrCreateWishlistId(userId, connection);
 
+  const [existing] = await connection.execute<WishlistItemIdRow[]>(
+    'SELECT id FROM wishlist_items WHERE wishlist_id = ? AND variant_id = ? LIMIT 1',
+    [wishlistId, variantId],
+  );
+
+  if (existing.length > 0) {
+    await connection.execute(
+      'DELETE FROM wishlist_items WHERE wishlist_id = ? AND variant_id = ?',
+      [wishlistId, variantId],
+    );
+    return { action: 'REMOVED' };
+  }
+
+  await connection.execute(
+    'INSERT INTO wishlist_items (wishlist_id, variant_id) VALUES (?, ?)',
+    [wishlistId, variantId],
+  );
+  return { action: 'ADDED' };
+}
+
+async function toggleItem(userId: number, variantId: number): Promise<WishlistToggleResult> {
+  if (isTestTransactionActive()) {
+    const { connection, owned } = await acquireConnection();
+    try {
+      return await toggleItemOnConnection(userId, variantId, connection);
+    } finally {
+      await releaseConnection(connection, owned);
+    }
+  }
+
+  const { connection, owned } = await acquireConnection();
   try {
     await connection.beginTransaction();
-
-    const wishlistId = await getOrCreateWishlistId(userId, connection);
-
-    const [existing] = await connection.execute<WishlistItemIdRow[]>(
-      'SELECT id FROM wishlist_items WHERE wishlist_id = ? AND variant_id = ? LIMIT 1',
-      [wishlistId, variantId],
-    );
-
-    if (existing.length > 0) {
-      await connection.execute(
-        'DELETE FROM wishlist_items WHERE wishlist_id = ? AND variant_id = ?',
-        [wishlistId, variantId],
-      );
-      await connection.commit();
-      return { action: 'REMOVED' };
-    }
-
-    await connection.execute(
-      'INSERT INTO wishlist_items (wishlist_id, variant_id) VALUES (?, ?)',
-      [wishlistId, variantId],
-    );
+    const result = await toggleItemOnConnection(userId, variantId, connection);
     await connection.commit();
-    return { action: 'ADDED' };
+    return result;
   } catch (error) {
     await connection.rollback();
     throw error;
   } finally {
-    connection.release();
+    await releaseConnection(connection, owned);
   }
 }
 
 async function getUserWishlist(userId: number): Promise<WishlistItemResponse[]> {
-  const pool = getPool();
-  const [rows] = await pool.execute<WishlistItemRow[]>(
+  const [rows] = await execute(
     `SELECT
        wi.id,
        pv.product_id,
@@ -96,8 +114,9 @@ async function getUserWishlist(userId: number): Promise<WishlistItemResponse[]> 
      ORDER BY wi.created_at DESC`,
     [userId],
   );
+  const itemRows = rows as WishlistItemRow[];
 
-  return rows.map((row) => ({
+  return itemRows.map((row) => ({
     id: row.id,
     product_id: row.product_id,
     variant_id: row.variant_id,

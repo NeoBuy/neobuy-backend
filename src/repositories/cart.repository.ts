@@ -1,5 +1,5 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
-import { getPool } from '../config/db';
+import { acquireConnection, execute, releaseConnection } from '../config/db';
 import type { CartItemResponse, CartResponse, CartStatus } from '../types/cart';
 
 interface CartIdRow extends RowDataPacket {
@@ -28,7 +28,7 @@ interface LineQuantityRow extends RowDataPacket {
 }
 
 async function getOrCreateActiveCart(userId: number): Promise<number> {
-  const connection = await getPool().getConnection();
+  const { connection, owned } = await acquireConnection();
   try {
     const [rows] = await connection.execute<CartIdRow[]>(
       "SELECT id FROM carts WHERE user_id = ? AND status = 'ACTIVE' LIMIT 1",
@@ -45,22 +45,21 @@ async function getOrCreateActiveCart(userId: number): Promise<number> {
     );
     return result.insertId;
   } finally {
-    connection.release();
+    await releaseConnection(connection, owned);
   }
 }
 
 async function getLineQuantity(cartId: number, variantId: number): Promise<number> {
-  const pool = getPool();
-  const [rows] = await pool.execute<LineQuantityRow[]>(
+  const [rows] = await execute(
     'SELECT quantity FROM cart_items WHERE cart_id = ? AND variant_id = ? LIMIT 1',
     [cartId, variantId],
   );
-  return rows[0]?.quantity ?? 0;
+  const typed = rows as LineQuantityRow[];
+  return typed[0]?.quantity ?? 0;
 }
 
 async function addItemToCart(cartId: number, variantId: number, quantity: number): Promise<void> {
-  const pool = getPool();
-  await pool.execute(
+  await execute(
     `INSERT INTO cart_items (cart_id, variant_id, quantity)
      VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
@@ -69,33 +68,30 @@ async function addItemToCart(cartId: number, variantId: number, quantity: number
 }
 
 async function updateItemQuantity(cartId: number, variantId: number, quantity: number): Promise<void> {
-  const pool = getPool();
-  await pool.execute(
+  await execute(
     `UPDATE cart_items SET quantity = ? WHERE cart_id = ? AND variant_id = ?`,
     [quantity, cartId, variantId],
   );
 }
 
 async function removeItemFromCart(cartId: number, variantId: number): Promise<void> {
-  const pool = getPool();
-  await pool.execute('DELETE FROM cart_items WHERE cart_id = ? AND variant_id = ?', [cartId, variantId]);
+  await execute('DELETE FROM cart_items WHERE cart_id = ? AND variant_id = ?', [cartId, variantId]);
 }
 
 async function getDetailedCart(userId: number): Promise<CartResponse | null> {
-  const pool = getPool();
-
-  const [cartRows] = await pool.execute<CartHeaderRow[]>(
+  const [cartRows] = await execute(
     "SELECT id, status FROM carts WHERE user_id = ? AND status = 'ACTIVE' LIMIT 1",
     [userId],
   );
+  const cartHeaderRows = cartRows as CartHeaderRow[];
 
-  if (cartRows.length === 0) {
+  if (cartHeaderRows.length === 0) {
     return null;
   }
 
-  const cart = cartRows[0];
+  const cart = cartHeaderRows[0];
 
-  const [itemRows] = await pool.execute<CartItemRow[]>(
+  const [itemRows] = await execute(
     `SELECT
        ci.id,
        ci.variant_id,
@@ -113,8 +109,9 @@ async function getDetailedCart(userId: number): Promise<CartResponse | null> {
      WHERE ci.cart_id = ?`,
     [cart.id],
   );
+  const cartItemRows = itemRows as CartItemRow[];
 
-  const items: CartItemResponse[] = itemRows.map((row) => ({
+  const items: CartItemResponse[] = cartItemRows.map((row) => ({
     id: row.id,
     variant_id: row.variant_id,
     sku: row.sku,

@@ -12,7 +12,12 @@
     "migrate:prod": "node -r dotenv/config ./node_modules/db-migrate/bin/db-migrate up -e prod",
     "test": "jest",
     "test:cart": "jest tests/cart.test.ts",
-    "test:wishlist": "jest tests/wishlist.test.ts"
+    "test:concurrency": "jest tests/concurrency.test.ts",
+    "test:cron": "jest tests/cron.test.ts",
+    "test:dashboard": "jest tests/graphql-dashboard.test.ts",
+    "test:stripe": "jest tests/stripe.test.ts",
+    "test:wishlist": "jest tests/wishlist.test.ts",
+    "test:order": "jest tests/order.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -29,7 +34,9 @@
     "express": "^5.2.1",
     "graphql": "^16.14.0",
     "jsonwebtoken": "^9.0.3",
-    "mysql2": "^3.22.4"
+    "mysql2": "^3.22.4",
+    "node-cron": "^4.2.1",
+    "stripe": "^22.2.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -38,6 +45,7 @@
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.3.0",
+    "@types/node-cron": "^3.0.11",
     "@types/supertest": "^6.0.3",
     "jest": "^30.2.0",
     "supertest": "^7.1.4",

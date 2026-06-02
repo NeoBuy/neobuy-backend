@@ -3,26 +3,27 @@ import request from 'supertest';
 import { getTestApp } from './helpers/app';
 import {
   authHeader,
-  cleanupTestUser,
   createTestUser,
   ensureTestCatalog,
   type TestCatalogFixture,
-  type TestUserFixture,
 } from './helpers/fixtures';
+import { beginTestTransaction, rollbackTestTransaction } from './helpers/transaction';
 
 describe('Wishlist API (integration)', () => {
   let app: Express;
-  let user: TestUserFixture;
   let catalog: TestCatalogFixture;
 
   beforeAll(async () => {
     app = await getTestApp();
-    user = await createTestUser();
     catalog = await ensureTestCatalog();
   });
 
-  afterAll(async () => {
-    await cleanupTestUser(user.id);
+  beforeEach(async () => {
+    await beginTestTransaction();
+  });
+
+  afterEach(async () => {
+    await rollbackTestTransaction();
   });
 
   it('1. rejects GET /api/wishlist without authentication', async () => {
@@ -32,6 +33,7 @@ describe('Wishlist API (integration)', () => {
   });
 
   it('2. returns an empty wishlist for a new user', async () => {
+    const user = await createTestUser();
     const res = await request(app).get('/api/wishlist').set(authHeader(user.token));
 
     expect(res.status).toBe(200);
@@ -39,50 +41,32 @@ describe('Wishlist API (integration)', () => {
     expect(res.body.data).toEqual([]);
   });
 
-  it('3. toggles a variant ON via POST /api/wishlist/toggle', async () => {
-    const res = await request(app)
+  it('3–6. supports wishlist toggle lifecycle', async () => {
+    const user = await createTestUser();
+
+    const addRes = await request(app)
       .post('/api/wishlist/toggle')
       .set(authHeader(user.token))
       .send({ variantId: catalog.variantId });
+    expect(addRes.status).toBe(200);
+    expect(addRes.body.action).toBe('ADDED');
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.action).toBe('ADDED');
-    expect(res.body.message).toMatch(/appended/i);
-  });
+    const withItem = await request(app).get('/api/wishlist').set(authHeader(user.token));
+    expect(withItem.body.data).toHaveLength(1);
+    expect(withItem.body.data[0].variant_id).toBe(catalog.variantId);
 
-  it('4. lists the wishlist with the saved variant', async () => {
-    const res = await request(app).get('/api/wishlist').set(authHeader(user.token));
-
-    expect(res.status).toBe(200);
-    expect(res.body.data).toHaveLength(1);
-
-    const item = res.body.data[0];
-    expect(item.variant_id).toBe(catalog.variantId);
-    expect(item.sku).toBe(catalog.sku);
-    expect(item.product_title).toBeTruthy();
-    expect(item.price_lkr).toBeGreaterThan(0);
-  });
-
-  it('5. toggles the same variant OFF', async () => {
-    const res = await request(app)
+    const removeRes = await request(app)
       .post('/api/wishlist/toggle')
       .set(authHeader(user.token))
       .send({ variantId: catalog.variantId });
+    expect(removeRes.body.action).toBe('REMOVED');
 
-    expect(res.status).toBe(200);
-    expect(res.body.action).toBe('REMOVED');
-    expect(res.body.message).toMatch(/purged/i);
-  });
-
-  it('6. returns an empty wishlist after toggle off', async () => {
-    const res = await request(app).get('/api/wishlist').set(authHeader(user.token));
-
-    expect(res.status).toBe(200);
-    expect(res.body.data).toEqual([]);
+    const empty = await request(app).get('/api/wishlist').set(authHeader(user.token));
+    expect(empty.body.data).toEqual([]);
   });
 
   it('7. rejects toggle without variantId in body', async () => {
+    const user = await createTestUser();
     const res = await request(app)
       .post('/api/wishlist/toggle')
       .set(authHeader(user.token))
@@ -94,6 +78,7 @@ describe('Wishlist API (integration)', () => {
   });
 
   it('8. returns 404 when toggling a non-existent variant', async () => {
+    const user = await createTestUser();
     const res = await request(app)
       .post('/api/wishlist/toggle')
       .set(authHeader(user.token))

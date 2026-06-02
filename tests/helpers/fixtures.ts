@@ -1,6 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import bcrypt from 'bcryptjs';
-import { getPool } from '../../src/config/db';
+import { execute, getPool, query } from '../../src/config/db';
 import { signAuthToken } from '../../src/utils/jwt';
 
 interface IdRow extends RowDataPacket {
@@ -9,6 +9,11 @@ interface IdRow extends RowDataPacket {
 
 interface VariantRow extends RowDataPacket {
   id: number;
+  sku: string;
+}
+
+interface InventoryQtyRow extends RowDataPacket {
+  quantity: number;
 }
 
 export interface TestUserFixture {
@@ -22,63 +27,17 @@ export interface TestCatalogFixture {
   sku: string;
 }
 
-const TEST_PASSWORD = 'JestTestPass123!';
-
-export async function createTestUser(): Promise<TestUserFixture> {
-  const pool = getPool();
-  const email = `jest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@neobuy.test`;
-  const password_hash = await bcrypt.hash(TEST_PASSWORD, 10);
-
-  const [merchantRows] = await pool.execute<IdRow[]>(
-    "SELECT id FROM merchants WHERE type = 'INTERNAL' LIMIT 1",
-  );
-  const merchantId = merchantRows[0]?.id;
-  if (!merchantId) {
-    throw new Error('No internal merchant found. Run migrations and seed first.');
-  }
-
-  const connection = await pool.getConnection();
-  let userId: number;
-
-  try {
-    await connection.beginTransaction();
-
-    const [userResult] = await connection.execute<ResultSetHeader>(
-      `INSERT INTO users (merchant_id, email, password_hash, status) VALUES (?, ?, ?, 'ACTIVE')`,
-      [merchantId, email, password_hash],
-    );
-    userId = userResult.insertId;
-
-    const [roleRows] = await connection.execute<IdRow[]>(
-      "SELECT id FROM roles WHERE code = 'CUSTOMER' LIMIT 1",
-    );
-    if (!roleRows[0]) {
-      throw new Error('CUSTOMER role not found.');
-    }
-
-    await connection.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [
-      userId,
-      roleRows[0].id,
-    ]);
-
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
-  }
-
-  const token = signAuthToken({
-    id: userId,
-    email,
-    phone: null,
-    roles: ['CUSTOMER'],
-  });
-
-  return { id: userId, email, token };
+export interface TestCatalogProfile {
+  productId: number;
+  variantId: number;
+  sku: string;
 }
 
+/**
+ * Ensures a committed catalog row exists for integration tests.
+ * Run in `beforeAll` (outside per-test transactions) so variants remain visible
+ * across rollbacks. Inserts only when no suitable variant exists.
+ */
 export async function ensureTestCatalog(): Promise<TestCatalogFixture> {
   const pool = getPool();
 
@@ -138,26 +97,98 @@ export async function ensureTestCatalog(): Promise<TestCatalogFixture> {
   }
 }
 
-export async function cleanupTestUser(userId: number): Promise<void> {
+export async function createTestProductCatalog(): Promise<TestCatalogProfile> {
   const pool = getPool();
-  await pool.execute(
-    `DELETE ci FROM cart_items ci
-     INNER JOIN carts c ON c.id = ci.cart_id
-     WHERE c.user_id = ?`,
-    [userId],
+  const [merchantRows] = await pool.execute<IdRow[]>(
+    "SELECT id FROM merchants WHERE type = 'INTERNAL' LIMIT 1",
   );
-  await pool.execute('DELETE FROM carts WHERE user_id = ?', [userId]);
-  await pool.execute(
-    `DELETE wi FROM wishlist_items wi
-     INNER JOIN wishlists w ON w.id = wi.wishlist_id
-     WHERE w.user_id = ?`,
-    [userId],
+  const merchantId = merchantRows[0]?.id;
+  if (!merchantId) {
+    throw new Error('No internal merchant found.');
+  }
+
+  const sku = `JEST-CONC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [productResult] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO products (merchant_id, title, description, status)
+       VALUES (?, 'Jest Concurrency Product', 'Concurrency stress catalog', 'ACTIVE')`,
+      [merchantId],
+    );
+    const productId = productResult.insertId;
+
+    const [variantResult] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO product_variants (product_id, sku, title, price_lkr, status)
+       VALUES (?, ?, 'Concurrency Variant', 2500, 'ACTIVE')`,
+      [productId, sku],
+    );
+    const variantId = variantResult.insertId;
+
+    await connection.execute('INSERT INTO inventory (variant_id, quantity) VALUES (?, ?)', [
+      variantId,
+      5,
+    ]);
+
+    await connection.commit();
+    return { productId, variantId, sku };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/** Creates a user inside the current test transaction (rolled back after each test). */
+export async function createTestUser(): Promise<TestUserFixture> {
+  const email = `jest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@neobuy.test`;
+  const password_hash = await bcrypt.hash('JestTestPass123!', 10);
+
+  const merchantRows = await query<IdRow>(
+    "SELECT id FROM merchants WHERE type = 'INTERNAL' LIMIT 1",
   );
-  await pool.execute('DELETE FROM wishlists WHERE user_id = ?', [userId]);
-  await pool.execute('DELETE FROM user_roles WHERE user_id = ?', [userId]);
-  await pool.execute('DELETE FROM users WHERE id = ?', [userId]);
+  const merchantId = merchantRows[0]?.id;
+  if (!merchantId) {
+    throw new Error('No internal merchant found. Run migrations and seed first.');
+  }
+
+  const [userResult] = await execute(
+    `INSERT INTO users (merchant_id, email, password_hash, status) VALUES (?, ?, ?, 'ACTIVE')`,
+    [merchantId, email, password_hash],
+  );
+  const userId = (userResult as ResultSetHeader).insertId;
+
+  const roleRows = await query<IdRow>("SELECT id FROM roles WHERE code = 'CUSTOMER' LIMIT 1");
+  if (!roleRows[0]) {
+    throw new Error('CUSTOMER role not found.');
+  }
+
+  await query('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, roleRows[0].id]);
+
+  const token = signAuthToken({
+    id: userId,
+    email,
+    phone: null,
+    roles: ['CUSTOMER'],
+  });
+
+  return { id: userId, email, token };
 }
 
 export function authHeader(token: string): { Authorization: string } {
   return { Authorization: `Bearer ${token}` };
+}
+
+export async function getInventoryQuantity(variantId: number): Promise<number> {
+  const rows = await query<InventoryQtyRow>(
+    'SELECT quantity FROM inventory WHERE variant_id = ? LIMIT 1',
+    [variantId],
+  );
+  return Number(rows[0]?.quantity ?? 0);
+}
+
+export async function setInventoryQuantity(variantId: number, quantity: number): Promise<void> {
+  await execute('UPDATE inventory SET quantity = ? WHERE variant_id = ?', [quantity, variantId]);
 }
